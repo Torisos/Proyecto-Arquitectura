@@ -1,0 +1,106 @@
+# Gestión académica con microservicios. Se levanta con:  docker compose up --build
+# Contexto de build = raíz del proyecto, para que todos los servicios copien la carpeta common/.
+
+x-common-env: &common-env
+  JWT_SECRET: cambia-este-secreto-en-produccion
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_USER: academico
+  RABBITMQ_PASS: academico
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: academico
+      RABBITMQ_DEFAULT_PASS: academico
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # panel web: http://localhost:15672 (academico / academico)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  gateway:
+    build: { context: ., dockerfile: gateway/Dockerfile }
+    ports:
+      - "8000:8000"      # única entrada pública al sistema
+    environment:
+      <<: *common-env
+      RATE_LIMIT: "100"
+      RATE_WINDOW_SECONDS: "10"
+      AUTH_URL: http://auth:8000
+      COURSE_URL: http://course:8000
+      ENROLLMENT_URL: http://enrollment:8000
+      PAYMENT_URL: http://payment:8000
+      NOTIFICATION_URL: http://notification:8000
+      STUDENT_URL: http://student:8000
+      TEACHER_URL: http://teacher:8000
+
+  auth:
+    build: { context: ., dockerfile: auth/Dockerfile }
+    environment: *common-env
+    volumes:
+      - auth_data:/data
+
+  student:
+    build: { context: ., dockerfile: student/Dockerfile }
+    environment: *common-env
+    volumes:
+      - student_data:/data
+
+  teacher:
+    build: { context: ., dockerfile: teacher/Dockerfile }
+    environment:
+      <<: *common-env
+      ENROLLMENT_URL: http://enrollment:8000
+    volumes:
+      - teacher_data:/data
+
+  course:
+    build: { context: ., dockerfile: course/Dockerfile }
+    environment:
+      <<: *common-env
+      CACHE_TTL_SECONDS: "30"
+    volumes:
+      - course_data:/data
+
+  enrollment:
+    build: { context: ., dockerfile: enrollment/Dockerfile }
+    environment:
+      <<: *common-env
+      COURSE_URL: http://course:8000
+      STUDENT_URL: http://student:8000
+      PAYMENT_URL: http://payment:8000
+      PAYMENT_TIMEOUT_SECONDS: "300"
+    volumes:
+      - enrollment_data:/data
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+
+  payment:
+    build: { context: ., dockerfile: payment/Dockerfile }
+    environment: *common-env
+    volumes:
+      - payment_data:/data
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+
+  notification:
+    build: { context: ., dockerfile: notification/Dockerfile }
+    environment: *common-env
+    volumes:
+      - notification_data:/data
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+
+volumes:
+  auth_data:
+  student_data:
+  teacher_data:
+  course_data:
+  enrollment_data:
+  payment_data:
+  notification_data:
